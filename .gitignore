@@ -1,0 +1,5 @@
+demo_data/
+data/
+*.log
+__pycache__/
+*.py[cod]
