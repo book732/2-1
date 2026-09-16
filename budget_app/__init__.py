@@ -1,0 +1,2 @@
+"""Budget CLI application package."""
+
