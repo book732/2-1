@@ -8,6 +8,20 @@ from .models import MonthlySummary, Transaction
 from .service import BudgetService, NotFoundError, ValidationError
 
 
+def _parse_amount(_value: str) -> int:
+    try:
+        return int(_value)
+    except ValueError as _error:
+        raise ValidationError("금액은 정수로 입력해야 합니다.") from _error
+
+
+def _parse_amount_argument(_value: str) -> int:
+    try:
+        return _parse_amount(_value)
+    except ValidationError as _error:
+        raise argparse.ArgumentTypeError(str(_error)) from _error
+
+
 def _build_parser() -> argparse.ArgumentParser:
     _parser = argparse.ArgumentParser(prog="python -m budget_app", description="개인 가계부 CLI")
     _parser.add_argument("--data-dir", default="data", type=Path, help="데이터 디렉터리 (기본값: ./data)")
@@ -33,7 +47,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _budget_commands = _budget.add_subparsers(dest="budget_command", required=True)
     _budget_set = _budget_commands.add_parser("set", help="월 예산을 설정합니다.")
     _budget_set.add_argument("--month", required=True, help="대상 월 (YYYY-MM)")
-    _budget_set.add_argument("--amount", required=True, type=int, help="예산 금액")
+    _budget_set.add_argument("--amount", required=True, type=_parse_amount_argument, help="예산 금액")
 
     _category = _commands.add_parser("category", help="카테고리를 관리합니다.")
     _category_commands = _category.add_subparsers(dest="category_command", required=True)
@@ -48,7 +62,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _update.add_argument("--date", help="날짜 (YYYY-MM-DD)")
     _update.add_argument("--type", choices=("income", "expense"), help="거래 유형")
     _update.add_argument("--category", help="카테고리")
-    _update.add_argument("--amount", type=int, help="금액")
+    _update.add_argument("--amount", type=_parse_amount_argument, help="금액")
     _update.add_argument("--memo", help="메모")
     _update.add_argument("--tags", help="쉼표로 구분한 태그")
 
@@ -109,7 +123,7 @@ def _interactive_update(_service: BudgetService, _transaction_id: str) -> dict[s
     ):
         _input = input(f"{_label} [{_value}]: ").strip()
         if _input:
-            _changes[_field] = int(_input) if _field == "amount" else _input
+            _changes[_field] = _parse_amount(_input) if _field == "amount" else _input
     return _changes
 
 
@@ -119,7 +133,7 @@ def _run(_arguments: argparse.Namespace, _service: BudgetService) -> None:
             _date=_prompt("날짜 (YYYY-MM-DD)"),
             _type=_prompt("유형 (income/expense)"),
             _category=_prompt("카테고리"),
-            _amount=int(_prompt("금액 (원)")),
+            _amount=_parse_amount(_prompt("금액 (원)")),
             _memo=_prompt("메모 (선택)"),
             _tags=_prompt("태그 (쉼표로 구분, 선택)"),
         )
@@ -189,6 +203,9 @@ def main(_argv: Sequence[str] | None = None) -> int:
     try:
         _service = BudgetService(_arguments.data_dir)
         _run(_arguments, _service)
+    except KeyboardInterrupt:
+        print("[취소] 입력이 취소되었습니다.")
+        return 130
     except (OSError, ValueError, ValidationError, NotFoundError) as _error:
         print(f"[오류] {_error}")
         return 2

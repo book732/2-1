@@ -87,6 +87,18 @@ class BudgetCliTests(unittest.TestCase):
         self.assertEqual(_status, 2)
         self.assertIn("거래를 찾을 수 없습니다", _output)
 
+    def test_invalid_amount_and_cancellation_are_friendly(self) -> None:
+        self.assertEqual(self._run("category", "add", "--name", "food")[0], 0)
+        with patch("builtins.input", side_effect=["2026-09-16", "expense", "food", "점심"]):
+            _status, _output = self._run("add")
+        self.assertEqual(_status, 2)
+        self.assertIn("금액은 정수로 입력해야 합니다", _output)
+
+        with patch("builtins.input", side_effect=KeyboardInterrupt):
+            _status, _output = self._run("add")
+        self.assertEqual(_status, 130)
+        self.assertIn("[취소] 입력이 취소되었습니다", _output)
+
 
 if __name__ == "__main__":
     unittest.main()
