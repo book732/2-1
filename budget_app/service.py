@@ -8,8 +8,8 @@ from datetime import date
 from pathlib import Path
 
 from .decorators import log_execution
-from .models import MonthlySummary, Transaction
-from .storage import BudgetStore, CategoryStore, DataPaths, TransactionRepository
+from .models import MonthlySummary, RecurringRule, Transaction
+from .storage import BackupStore, BudgetStore, CategoryStore, DataPaths, RecurringRepository, TransactionRepository
 
 
 class ValidationError(ValueError):
@@ -27,6 +27,8 @@ class BudgetService:
         self._transactions = TransactionRepository(_paths)
         self._categories = CategoryStore(_paths)
         self._budgets = BudgetStore(_paths)
+        self._recurrences = RecurringRepository(_paths)
+        self._backups = BackupStore(_paths)
         self._logger = logging.getLogger(f"budget_app.{_data_dir.resolve()}")
         if not self._logger.handlers:
             _handler = logging.FileHandler(_data_dir / "budget_app.log", encoding="utf-8")
@@ -63,6 +65,12 @@ class BudgetService:
     def _validate_amount(_value: int) -> int:
         if _value <= 0:
             raise ValidationError("금액은 0보다 커야 합니다.")
+        return _value
+
+    @staticmethod
+    def _validate_day(_value: int) -> int:
+        if not 1 <= _value <= 31:
+            raise ValidationError("반복 일자는 1부터 31 사이여야 합니다.")
         return _value
 
     @staticmethod
@@ -110,6 +118,7 @@ class BudgetService:
         _amount: int,
         _memo: str,
         _tags: tuple[str, ...],
+        _recurrence_id: str | None = None,
     ) -> Transaction:
         return Transaction(
             id=_transaction_id,
@@ -119,6 +128,7 @@ class BudgetService:
             amount=_amount,
             memo=_memo,
             tags=_tags,
+            recurrence_id=_recurrence_id,
         )
 
     def list_transactions(self, _limit: int | None = None) -> Iterator[Transaction]:
@@ -176,6 +186,7 @@ class BudgetService:
             amount=self._validate_amount(int(_changes.get("amount", _current.amount))),
             memo=str(_changes.get("memo", _current.memo)).strip(),
             tags=self._normalize_tags(_changes.get("tags", _current.tags)),
+            recurrence_id=_current.recurrence_id,
         )
         self._transactions.replace(_transaction_id, _transaction)
         return _transaction
@@ -218,6 +229,73 @@ class BudgetService:
 
     def get_transaction(self, _transaction_id: str) -> Transaction | None:
         return self._transactions.get(_transaction_id)
+
+    @log_execution
+    def create_backup(self) -> tuple[Path, ...]:
+        return self._backups.create()
+
+    @log_execution
+    def add_recurring_rule(
+        self,
+        *,
+        _type: str,
+        _category: str,
+        _amount: int,
+        _day: int,
+        _memo: str,
+        _tags: str,
+    ) -> RecurringRule:
+        _rule = RecurringRule(
+            id=self._recurrences.next_id(),
+            type=self._validate_type(_type),
+            category=self._validate_category(_category),
+            amount=self._validate_amount(_amount),
+            day=self._validate_day(_day),
+            memo=_memo.strip(),
+            tags=self._normalize_tags(_tags),
+        )
+        self._recurrences.append(_rule)
+        return _rule
+
+    def list_recurring_rules(self) -> Iterator[RecurringRule]:
+        yield from self._recurrences.iter_rules()
+
+    @log_execution
+    def apply_recurring_rules(self, _month: str) -> tuple[int, int]:
+        _month = self._validate_month(_month)
+        _year, _month_number = (int(_part) for _part in _month.split("-"))
+        _last_day = monthrange(_year, _month_number)[1]
+        _already_created = {
+            _transaction.recurrence_id
+            for _transaction in self._transactions.iter_transactions()
+            if _transaction.recurrence_id and _transaction.date.startswith(_month)
+        }
+        _next_number = int(self._transactions.next_id().removeprefix("TX-"))
+        _created = 0
+        _skipped = 0
+
+        def _transactions() -> Iterator[Transaction]:
+            nonlocal _created, _next_number, _skipped
+            for _rule in self._recurrences.iter_rules():
+                if _rule.id in _already_created or _rule.day > _last_day:
+                    _skipped += 1
+                    continue
+                _transaction = self._build_transaction(
+                    _transaction_id=f"TX-{_next_number:06d}",
+                    _date=date(_year, _month_number, _rule.day).isoformat(),
+                    _type=_rule.type,
+                    _category=_rule.category,
+                    _amount=_rule.amount,
+                    _memo=_rule.memo,
+                    _tags=_rule.tags,
+                    _recurrence_id=_rule.id,
+                )
+                _next_number += 1
+                _created += 1
+                yield _transaction
+
+        self._transactions.append_many(_transactions())
+        return _created, _skipped
 
     @log_execution
     def remove_category(self, _name: str) -> None:

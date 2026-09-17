@@ -37,6 +37,7 @@ class BudgetCliTests(unittest.TestCase):
 
         _status, _output = self._run("list", "--limit", "1")
         self.assertEqual(_status, 0)
+        self.assertIn("ID", _output)
         self.assertIn("TX-000002", _output)
 
         _status, _output = self._run("search", "--tag", "meal")
@@ -52,8 +53,10 @@ class BudgetCliTests(unittest.TestCase):
         self.assertEqual(self._run("budget", "set", "--month", "2024-01", "--amount", "10000")[0], 0)
         _status, _output = self._run("summary", "--month", "2024-01")
         self.assertEqual(_status, 0)
-        self.assertIn("총 수입 : 3000000 원", _output)
-        self.assertIn("[경고] 예산 초과 : 5000 원", _output)
+        self.assertIn("총 수입", _output)
+        self.assertIn("3,000,000 원", _output)
+        self.assertIn("예산 초과", _output)
+        self.assertIn("5,000 원", _output)
 
         _status, _output = self._run("category", "remove", "--name", "food")
         self.assertEqual(_status, 2)
@@ -98,6 +101,54 @@ class BudgetCliTests(unittest.TestCase):
             _status, _output = self._run("add")
         self.assertEqual(_status, 130)
         self.assertIn("[취소] 입력이 취소되었습니다", _output)
+
+    def test_all_bonus_features(self) -> None:
+        self.assertEqual(self._run("category", "add", "--name", "rent")[0], 0)
+        _status, _output = self._run(
+            "recurring",
+            "add",
+            "--type",
+            "expense",
+            "--category",
+            "rent",
+            "--amount",
+            "500000",
+            "--day",
+            "31",
+            "--memo",
+            "월세",
+            "--tags",
+            "fixed",
+        )
+        self.assertEqual(_status, 0)
+        self.assertIn("rule=RC-000001", _output)
+
+        _status, _output = self._run("recurring", "list")
+        self.assertEqual(_status, 0)
+        self.assertIn("RULE ID", _output)
+        self.assertIn("RC-000001", _output)
+
+        _status, _output = self._run("recurring", "apply", "--month", "2024-02")
+        self.assertEqual(_status, 0)
+        self.assertIn("created=0, skipped=1", _output)
+
+        _status, _output = self._run("recurring", "apply", "--month", "2024-03")
+        self.assertEqual(_status, 0)
+        self.assertIn("created=1, skipped=0", _output)
+        _status, _output = self._run("recurring", "apply", "--month", "2024-03")
+        self.assertEqual(_status, 0)
+        self.assertIn("created=0, skipped=1", _output)
+
+        _status, _output = self._run("list")
+        self.assertEqual(_status, 0)
+        self.assertIn("2024-03-31", _output)
+        self.assertIn("500,000", _output)
+
+        _status, _output = self._run("backup")
+        self.assertEqual(_status, 0)
+        self.assertIn("files=4", _output)
+        _backup_files = list((self._data_dir / "backups").glob("*.jsonl"))
+        self.assertEqual(len(_backup_files), 4)
 
 
 if __name__ == "__main__":

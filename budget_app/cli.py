@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from .models import MonthlySummary, Transaction
+from .formatters import format_recurring_rule, format_summary, format_transaction, recurring_header, transaction_header
+from .models import MonthlySummary, RecurringRule, Transaction
 from .service import BudgetService, NotFoundError, ValidationError
 
 
@@ -28,6 +29,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _commands = _parser.add_subparsers(dest="command", required=True)
 
     _commands.add_parser("add", help="대화형으로 거래를 추가합니다.")
+    _commands.add_parser("backup", help="모든 데이터 파일을 백업합니다.")
     _list = _commands.add_parser("list", help="최신 거래를 조회합니다.")
     _list.add_argument("--limit", type=int, help="출력할 최대 거래 수")
 
@@ -57,6 +59,19 @@ def _build_parser() -> argparse.ArgumentParser:
     _category_remove = _category_commands.add_parser("remove", help="카테고리를 삭제합니다.")
     _category_remove.add_argument("--name", help="카테고리 이름")
 
+    _recurring = _commands.add_parser("recurring", help="월별 반복 거래를 관리합니다.")
+    _recurring_commands = _recurring.add_subparsers(dest="recurring_command", required=True)
+    _recurring_add = _recurring_commands.add_parser("add", help="반복 거래 규칙을 등록합니다.")
+    _recurring_add.add_argument("--type", required=True, choices=("income", "expense"), help="거래 유형")
+    _recurring_add.add_argument("--category", required=True, help="카테고리")
+    _recurring_add.add_argument("--amount", required=True, type=_parse_amount_argument, help="금액")
+    _recurring_add.add_argument("--day", required=True, type=int, help="매월 생성할 일자 (1-31)")
+    _recurring_add.add_argument("--memo", default="", help="메모")
+    _recurring_add.add_argument("--tags", default="", help="쉼표로 구분한 태그")
+    _recurring_commands.add_parser("list", help="반복 거래 규칙을 조회합니다.")
+    _recurring_apply = _recurring_commands.add_parser("apply", help="특정 월의 반복 거래를 생성합니다.")
+    _recurring_apply.add_argument("--month", required=True, help="대상 월 (YYYY-MM)")
+
     _update = _commands.add_parser("update", help="거래를 수정합니다.")
     _update.add_argument("--id", required=True, help="거래 ID")
     _update.add_argument("--date", help="날짜 (YYYY-MM-DD)")
@@ -83,29 +98,39 @@ def _prompt(_label: str) -> str:
     return input(f"{_label}: ").strip()
 
 
-def _print_transaction(_transaction: Transaction) -> None:
-    _tags = f" | {','.join(_transaction.tags)}" if _transaction.tags else ""
-    print(
-        f"{_transaction.id} | {_transaction.date} | {_transaction.type} | "
-        f"{_transaction.category} | {_transaction.amount} | {_transaction.memo}{_tags}"
-    )
+def _print_transactions(_transactions: Iterable[Transaction]) -> None:
+    _iterator = iter(_transactions)
+    _first = next(_iterator, None)
+    if _first is None:
+        print("[안내] 거래가 없습니다.")
+        return
+    _header, _divider = transaction_header()
+    print(_header)
+    print(_divider)
+    print(format_transaction(_first))
+    for _transaction in _iterator:
+        print(format_transaction(_transaction))
 
 
 def _print_summary(_summary: MonthlySummary, _top: int) -> None:
     if _top <= 0:
         raise ValidationError("--top은 1 이상의 정수여야 합니다.")
-    print(f"총 수입 : {_summary.income} 원")
-    print(f"총 지출 : {_summary.expense} 원")
-    print(f"잔액 : {_summary.balance} 원")
-    if _summary.budget is not None:
-        print(f"예산 : {_summary.budget} 원 (사용 {_summary.budget_ratio * 100:.1f}%)")
-        if _summary.expense > _summary.budget:
-            print(f"[경고] 예산 초과 : {_summary.expense - _summary.budget} 원")
-    print(f"지출 TOP {_top}")
-    for _index, (_category, _amount) in enumerate(
-        sorted(_summary.category_expenses.items(), key=lambda _item: (-_item[1], _item[0]))[:_top], start=1
-    ):
-        print(f"{_index}) {_category} {_amount} 원")
+    for _line in format_summary(_summary, _top):
+        print(_line)
+
+
+def _print_recurring_rules(_rules: Iterable[RecurringRule]) -> None:
+    _iterator = iter(_rules)
+    _first = next(_iterator, None)
+    if _first is None:
+        print("[안내] 등록된 반복 거래 규칙이 없습니다.")
+        return
+    _header, _divider = recurring_header()
+    print(_header)
+    print(_divider)
+    print(format_recurring_rule(_first))
+    for _rule in _iterator:
+        print(format_recurring_rule(_rule))
 
 
 def _interactive_update(_service: BudgetService, _transaction_id: str) -> dict[str, object]:
@@ -138,19 +163,22 @@ def _run(_arguments: argparse.Namespace, _service: BudgetService) -> None:
             _tags=_prompt("태그 (쉼표로 구분, 선택)"),
         )
         print(f"[저장 완료] id={_transaction.id}")
+    elif _arguments.command == "backup":
+        _backups = _service.create_backup()
+        print(f"[완료] backup={_backups[0].parent} files={len(_backups)}")
     elif _arguments.command == "list":
-        for _transaction in _service.list_transactions(_arguments.limit):
-            _print_transaction(_transaction)
+        _print_transactions(_service.list_transactions(_arguments.limit))
     elif _arguments.command == "search":
-        for _transaction in _service.search_transactions(
-            _from=_arguments.from_date,
-            _to=_arguments.to_date,
-            _category=_arguments.category,
-            _type=_arguments.type,
-            _query=_arguments.query,
-            _tag=_arguments.tag,
-        ):
-            _print_transaction(_transaction)
+        _print_transactions(
+            _service.search_transactions(
+                _from=_arguments.from_date,
+                _to=_arguments.to_date,
+                _category=_arguments.category,
+                _type=_arguments.type,
+                _query=_arguments.query,
+                _tag=_arguments.tag,
+            )
+        )
     elif _arguments.command == "summary":
         _print_summary(_service.summarize(_arguments.month), _arguments.top)
     elif _arguments.command == "budget":
@@ -170,6 +198,22 @@ def _run(_arguments: argparse.Namespace, _service: BudgetService) -> None:
             _name = _arguments.name or _prompt("카테고리명")
             _service.remove_category(_name)
             print(f"[삭제 완료] category={_name}")
+    elif _arguments.command == "recurring":
+        if _arguments.recurring_command == "add":
+            _rule = _service.add_recurring_rule(
+                _type=_arguments.type,
+                _category=_arguments.category,
+                _amount=_arguments.amount,
+                _day=_arguments.day,
+                _memo=_arguments.memo,
+                _tags=_arguments.tags,
+            )
+            print(f"[저장 완료] rule={_rule.id}")
+        elif _arguments.recurring_command == "list":
+            _print_recurring_rules(_service.list_recurring_rules())
+        else:
+            _created, _skipped = _service.apply_recurring_rules(_arguments.month)
+            print(f"[완료] created={_created}, skipped={_skipped}")
     elif _arguments.command == "update":
         _changes = {
             _field: getattr(_arguments, _field)

@@ -16,13 +16,15 @@ python -m budget_app --data-dir ./data list --limit 3
 - `transactions.jsonl`: 거래 데이터
 - `categories.jsonl`: 등록 카테고리
 - `budgets.jsonl`: 월별 예산
+- `recurrences.jsonl`: 월별 반복 거래 규칙
 
-거래 목록과 검색 결과는 최신 저장 순서로 출력하며, JSONL 레코드를 역방향으로 스트리밍합니다.
+거래 목록과 검색 결과는 최신 저장 순서의 고정 폭 표로 출력하며, JSONL 레코드를 역방향으로 스트리밍합니다.
 
 ## 명령
 
 ```text
 add
+backup
 list --limit N
 search [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--category NAME] [--type income|expense] [--q TEXT] [--tag TAG]
 summary --month YYYY-MM [--top N]
@@ -30,6 +32,9 @@ budget set --month YYYY-MM --amount AMOUNT
 category add [--name NAME]
 category list
 category remove [--name NAME]
+recurring add --type income|expense --category NAME --amount AMOUNT --day 1-31 [--memo TEXT] [--tags TAG1,TAG2]
+recurring list
+recurring apply --month YYYY-MM
 update --id ID [--date YYYY-MM-DD] [--type income|expense] [--category NAME] [--amount AMOUNT] [--memo TEXT] [--tags TAG1,TAG2]
 delete --id ID
 import --from INPUT.csv
@@ -37,6 +42,8 @@ export --out OUTPUT.csv (--month YYYY-MM | --from YYYY-MM-DD --to YYYY-MM-DD)
 ```
 
 `add`는 필수 입력을 대화형으로 받습니다. `update`는 수정 옵션을 생략하면 각 필드를 대화형으로 선택 수정합니다. `category remove`는 해당 카테고리를 참조하는 거래가 있으면 삭제를 거부합니다.
+
+`backup`은 모든 JSONL 데이터 파일을 `data-dir/backups/`에 타임스탬프 파일명으로 복사합니다. `recurring apply`는 등록된 월별 규칙을 지정한 월에 생성하며, 이미 생성한 규칙과 해당 월에 존재하지 않는 일자(예: 2월 31일)는 건너뜁니다.
 
 ## CSV 스키마
 

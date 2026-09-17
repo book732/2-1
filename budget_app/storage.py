@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Iterable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .models import Transaction
+from .models import RecurringRule, Transaction
 
 
 class DataPaths:
@@ -16,11 +18,15 @@ class DataPaths:
         self._transactions = _data_dir / "transactions.jsonl"
         self._categories = _data_dir / "categories.jsonl"
         self._budgets = _data_dir / "budgets.jsonl"
+        self._recurrences = _data_dir / "recurrences.jsonl"
 
     def ensure_exists(self) -> None:
         self._data_dir.mkdir(parents=True, exist_ok=True)
-        for _path in (self._transactions, self._categories, self._budgets):
+        for _path in self.data_files():
             _path.touch(exist_ok=True)
+
+    def data_files(self) -> tuple[Path, ...]:
+        return self._transactions, self._categories, self._budgets, self._recurrences
 
 
 def _iter_json_records(_path: Path, *, _reverse: bool = False) -> Iterator[dict[str, Any]]:
@@ -194,3 +200,42 @@ class BudgetStore:
                 yield {"month": _month, "amount": _amount}
 
         _atomic_write_jsonl(self._paths._budgets, _records())
+
+
+class RecurringRepository:
+    def __init__(self, _paths: DataPaths) -> None:
+        self._paths = _paths
+
+    def iter_rules(self) -> Iterator[RecurringRule]:
+        for _record in _iter_json_records(self._paths._recurrences):
+            yield RecurringRule.from_dict(_record)
+
+    def append(self, _rule: RecurringRule) -> None:
+        with self._paths._recurrences.open("a", encoding="utf-8", newline="\n") as _stream:
+            _stream.write(json.dumps(_rule.to_dict(), ensure_ascii=False, separators=(",", ":")))
+            _stream.write("\n")
+            _stream.flush()
+            os.fsync(_stream.fileno())
+
+    def next_id(self) -> str:
+        _largest = 0
+        for _rule in self.iter_rules():
+            if _rule.id.startswith("RC-") and _rule.id[3:].isdigit():
+                _largest = max(_largest, int(_rule.id[3:]))
+        return f"RC-{_largest + 1:06d}"
+
+
+class BackupStore:
+    def __init__(self, _paths: DataPaths) -> None:
+        self._paths = _paths
+
+    def create(self) -> tuple[Path, ...]:
+        _backup_directory = self._paths._data_dir / "backups"
+        _backup_directory.mkdir(parents=True, exist_ok=True)
+        _timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        _backups: list[Path] = []
+        for _source in self._paths.data_files():
+            _target = _backup_directory / f"{_source.stem}-{_timestamp}{_source.suffix}"
+            shutil.copy2(_source, _target)
+            _backups.append(_target)
+        return tuple(_backups)
