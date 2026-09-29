@@ -59,3 +59,4 @@ export --out OUTPUT.csv (--month YYYY-MM | --from YYYY-MM-DD --to YYYY-MM-DD)
 | tags | N | 쉼표로 구분한 문자열 |
 
 가져오기 전에 CSV의 카테고리를 `category add`로 등록해야 합니다. 잘못된 행은 건너뛰고 최종 처리 건수를 출력합니다.
+행에서 `memo` 또는 `tags` 값이 빠지면 빈 값으로 처리합니다. 날짜·유형·카테고리·금액이 빠진 행은 건너뜁니다.
