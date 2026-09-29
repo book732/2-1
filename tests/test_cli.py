@@ -90,6 +90,21 @@ class BudgetCliTests(unittest.TestCase):
         self.assertEqual(_status, 2)
         self.assertIn("거래를 찾을 수 없습니다", _output)
 
+    def test_import_csv_accepts_missing_optional_cells_and_skips_missing_amount(self) -> None:
+        self.assertEqual(self._run("category", "add", "--name", "transport")[0], 0)
+        _source = self._root / "short_rows.csv"
+        _source.write_text(
+            "date,type,category,amount,memo,tags\n"
+            "2024-01-12,expense,transport,20000\n"
+            "2024-01-13,expense,transport\n",
+            encoding="utf-8",
+        )
+
+        _status, _output = self._run("import", "--from", str(_source))
+        self.assertEqual(_status, 0)
+        self.assertIn("imported=1, skipped=1", _output)
+        self.assertIn("20,000", self._run("list")[1])
+
     def test_invalid_amount_and_cancellation_are_friendly(self) -> None:
         self.assertEqual(self._run("category", "add", "--name", "food")[0], 0)
         with patch("builtins.input", side_effect=["2026-09-16", "expense", "food", "점심"]):

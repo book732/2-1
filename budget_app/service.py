@@ -318,6 +318,9 @@ class BudgetService:
             def _transactions() -> Iterator[Transaction]:
                 nonlocal _imported, _skipped, _next_number
                 for _row in _reader:
+                    if any(_row[_field] is None for _field in ("date", "type", "category", "amount")):
+                        _skipped += 1
+                        continue
                     try:
                         _transaction = self._build_transaction(
                             _transaction_id=f"TX-{_next_number:06d}",
@@ -325,8 +328,8 @@ class BudgetService:
                             _type=self._validate_type(_row["type"]),
                             _category=self._validate_category(_row["category"]),
                             _amount=self._validate_amount(int(_row["amount"])),
-                            _memo=_row["memo"].strip(),
-                            _tags=self._normalize_tags(_row["tags"]),
+                            _memo=(_row["memo"] or "").strip(),
+                            _tags=self._normalize_tags(_row["tags"] or ""),
                         )
                     except (ValueError, ValidationError):
                         _skipped += 1
